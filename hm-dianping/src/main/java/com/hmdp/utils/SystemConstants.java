@@ -9,4 +9,5 @@ public class SystemConstants {
     public static final String PHONE_ERROR_CODE = "手机号格式有误，请重新输入！";
     public static final String MESSAGE_CODE = "code";
     public static final String VERIFY_CODE_ERROR = "验证码错误！";
+    public static final String USER = "user";
 }
