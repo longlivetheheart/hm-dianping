@@ -10,4 +10,5 @@ public class SystemConstants {
     public static final String MESSAGE_CODE = "code";
     public static final String VERIFY_CODE_ERROR = "验证码错误！";
     public static final String USER = "user";
+    public static final String AUTHORIZATION = "authorization";
 }
