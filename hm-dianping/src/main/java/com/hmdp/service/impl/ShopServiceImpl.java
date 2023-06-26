@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -37,14 +38,22 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         if (StrUtil.isNotBlank(shopJson)) {
             return Result.ok(JSONUtil.toBean(shopJson, Shop.class));
         }
+        // 判断返回的是否是空值
+        if (shopJson != null) {
+            // 返回一个错误信息
+            return Result.fail("店铺不存在！");
+        }
         // 3. 不存在去数据库查询
         Shop shop = getById(id);
         // 4. 数据库也不存在返回错误信息
         if (shop == null) {
+            // 将空值写入Redis
+            stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
+            // 返回错误信息
             return Result.fail("店铺不存在！");
         }
         // 5. 数据库存在，放入缓存
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), RedisConstants.CACHE_SHOP_TTL + RandomUtil.randomLong(5), TimeUnit.MINUTES);
         // 6. 返回查询信息
         return Result.ok(shop);
     }
