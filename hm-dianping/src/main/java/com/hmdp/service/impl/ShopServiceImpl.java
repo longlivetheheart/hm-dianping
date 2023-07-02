@@ -4,12 +4,14 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
+import com.hmdp.utils.CacheExecutor;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisData;
 import lombok.Data;
@@ -19,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,15 +39,76 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     private StringRedisTemplate stringRedisTemplate;
     @Override
     public Result queryById(Long id) {
-        // 缓存穿透
+        // 1. 缓存穿透
 //        Shop shop = queryWithPassThrough(id);
-        // 互斥锁解决缓存击穿
-        Shop shop = queryWithMutex(id);
+        // 2. 互斥锁解决缓存击穿
+//        Shop shop = queryWithMutex(id);
+        // 3. 逻辑过期
+        Shop shop = queryWithLogicalExpire(id);
         if (shop == null) {
             return Result.fail("店铺不存在！");
         }
         // 6. 返回查询信息
         return Result.ok(shop);
+    }
+
+    private Shop queryWithLogicalExpire(Long id) {
+        String key = RedisConstants.CACHE_SHOP_KEY + id;
+        // 1. 先去Redis中查询
+        String shopJson = stringRedisTemplate.opsForValue().get(key);
+        // 2. 判断是否存在
+        if (StrUtil.isBlank(shopJson)) {
+            // 3. 不存在直接返回
+            return null;
+        }
+        // 4. 存在，判断是否逻辑过期
+        RedisData redisData = JSONUtil.toBean(shopJson, RedisData.class);
+        Shop shop = JSONUtil.toBean((JSONObject) redisData.getData(), Shop.class);
+        // 4.1 未过期直接返回
+        LocalDateTime expireTime = redisData.getExpireTime();
+        if (expireTime.isAfter(LocalDateTime.now())) {
+            return shop;
+        }
+        // 4.2 过期，获取互斥锁进行缓存重建
+        String lockKey = RedisConstants.LOCK_SHOP_KEY + id;
+        boolean isLock = tryLock(lockKey);
+        // 5. 获取互斥锁成功，实现缓存重建
+        if (isLock) {
+            // 进行double-check
+            if (doubleCheckForLogical(key) != null) {
+                return doubleCheckForLogical(key);
+            }
+            // 5.1 开启新线程进行缓存重建
+            ThreadPoolExecutor executor = CacheExecutor.threadPool;
+            executor.submit(() -> {
+                try {
+                    this.savaShopToRedis(id, 20L);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    // 释放锁
+                    unlock(lockKey);
+                }
+            });
+
+        }
+        // 6 未成功直接返回过期信息
+        return shop;
+    }
+
+    private Shop doubleCheckForLogical(String key) {
+        // 1. 先去Redis中查询
+        String shopJson = stringRedisTemplate.opsForValue().get(key);
+
+        // 4. 存在，判断是否逻辑过期
+        RedisData redisData = JSONUtil.toBean(shopJson, RedisData.class);
+        Shop shop = JSONUtil.toBean((JSONObject) redisData.getData(), Shop.class);
+        // 4.1 未过期直接返回
+        LocalDateTime expireTime = redisData.getExpireTime();
+        if (expireTime.isAfter(LocalDateTime.now())) {
+            return shop;
+        }
+        return null;
     }
 
     private Shop queryWithMutex(Long id) {
@@ -110,9 +174,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return doubleCheckResult;
     }
 
-    public void savaShopToRedis(Long id, Long expireSeconds) {
+    public void savaShopToRedis(Long id, Long expireSeconds) throws InterruptedException {
         // 1. 查询数据库数据
         Shop shop = getById(id);
+        Thread.sleep(200);
         // 2. 封装逻辑过期时间
         RedisData redisData = new RedisData();
         redisData.setData(shop);
