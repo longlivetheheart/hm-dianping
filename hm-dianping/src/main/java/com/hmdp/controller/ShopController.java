@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
+import com.hmdp.exception.BusinessException;
 import com.hmdp.service.IShopService;
 import com.hmdp.utils.SystemConstants;
 import org.springframework.web.bind.annotation.*;
@@ -96,5 +97,15 @@ public class ShopController {
                 .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         // 返回数据
         return Result.ok(page.getRecords());
+    }
+
+    @GetMapping("/test/{value}")
+    public Result globalExceptionTest(@PathVariable("value") String value) {
+        if ("success".equals(value)) {
+            return Result.ok();
+        } else {
+            throw new BusinessException("业务异常！");
+//            return Result.fail("error");
+        }
     }
 }
